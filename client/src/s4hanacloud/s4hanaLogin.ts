@@ -103,7 +103,7 @@ export async function s4HanaCloudLogin(conf: RemoteConfig): Promise<string> {
 display:flex;justify-content:center;align-items:center;height:100vh;
 background:#1e1e1e;color:#cccccc;">
 <div style="text-align:center">
-<h2>\u2705 S/4HANA Cloud Login Successful</h2>
+<h2>✅ S/4HANA Cloud Login Successful</h2>
 <p>You can close this browser tab and return to VS Code.</p>
 </div></body></html>`)
 
@@ -115,7 +115,7 @@ background:#1e1e1e;color:#cccccc;">
               cookies: ticket,
               timestamp: Date.now()
             })
-            log(`\u2705 S/4HANA Cloud SSO login successful for: ${connId}`)
+            log(`✅ S/4HANA Cloud SSO login successful for: ${connId}`)
             resolve(ticket)
           } else {
             reject(new Error("No SSO ticket received in callback"))
@@ -196,7 +196,7 @@ background:#1e1e1e;color:#cccccc;">
               cookies: ticket,
               timestamp: Date.now()
             })
-            log(`\u2705 S/4HANA Cloud SSO ticket obtained for: ${connId}`)
+            log(`✅ S/4HANA Cloud SSO ticket obtained for: ${connId}`)
             resolve(ticket)
           } catch (err) {
             clearTimeout(timeoutHandle)
