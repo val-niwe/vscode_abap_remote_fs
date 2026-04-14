@@ -122,13 +122,27 @@ function addContentTypeInterceptor(adtClient: ADTClient) {
 }
 
 /**
- * Add an axios interceptor that converts ADTClient's Bearer token auth to
- * the MYSAPSSO2 header required by S/4HANA Public Cloud.
+ * Add axios request/response interceptors that implement the correct
+ * S/4HANA Public Cloud authentication handshake using reentrance tickets.
  *
- * ADTClient uses the BearerFetcher to obtain the reentrance ticket and sets
- * "Authorization: bearer <ticket>" on every request before passing it to
- * the underlying axios instance.  Our interceptor runs at that point and
- * replaces the header with "MYSAPSSO2: <ticket>" plus the session-create hint.
+ * Lifecycle:
+ *  1. First request (session establishment — the ADT login call):
+ *     ADTClient sets "Authorization: bearer <ticket>"; we convert it to
+ *     "MYSAPSSO2: <ticket>" + "x-sap-security-session: create".
+ *     The server creates an ABAP session and returns a session cookie + CSRF token.
+ *
+ *  2. All subsequent requests:
+ *     ADTClient still adds "Authorization: bearer <ticket>" (same ticket kept
+ *     in the private `bearer` field).  We simply remove the header — the
+ *     session cookie established in step 1 authenticates the request.
+ *     Sending MYSAPSSO2 again would make the server try to create a new session
+ *     on every call, breaking the CSRF token and causing unexpected responses.
+ *
+ *  3. Session expiry / re-login:
+ *     When the server returns 401, the library's auto-login kicks in and calls
+ *     `login()` again, obtaining a fresh ticket.  Our response error interceptor
+ *     resets `sessionEstablished` so that the re-login request is treated as
+ *     a new session establishment (step 1 again).
  */
 function addS4HanaCloudAuthInterceptor(adtClient: ADTClient) {
   try {
@@ -141,7 +155,11 @@ function addS4HanaCloudAuthInterceptor(adtClient: ADTClient) {
       httpClient.httpclient.axios &&
       typeof httpClient.httpclient.axios.interceptors === "object"
     ) {
-      httpClient.httpclient.axios.interceptors.request.use((config: any) => {
+      const axios = httpClient.httpclient.axios
+      // Per-client flag: true once the first MYSAPSSO2 login succeeded.
+      let sessionEstablished = false
+
+      axios.interceptors.request.use((config: any) => {
         if (!config || typeof config !== "object") return config
         const headers = config.headers || {}
         const auth: unknown = headers.Authorization || headers.authorization
@@ -149,12 +167,33 @@ function addS4HanaCloudAuthInterceptor(adtClient: ADTClient) {
           const ticket = auth.substring(7)
           delete headers.Authorization
           delete headers.authorization
-          headers.MYSAPSSO2 = ticket
-          headers["x-sap-security-session"] = "create"
+          if (!sessionEstablished) {
+            // First request: establish the ABAP session via the reentrance ticket.
+            headers.MYSAPSSO2 = ticket
+            headers["x-sap-security-session"] = "create"
+          }
+          // After session is established subsequent requests rely on the session
+          // cookie; the Authorization header is removed (done above) and nothing
+          // extra is added here.
           config.headers = headers
         }
         return config
       })
+
+      // Mark session as established after the first successful response, and
+      // reset it when a 401 is received so the next login attempt re-sends MYSAPSSO2.
+      axios.interceptors.response.use(
+        (response: any) => {
+          sessionEstablished = true
+          return response
+        },
+        (error: any) => {
+          if (error?.response?.status === 401) {
+            sessionEstablished = false
+          }
+          return Promise.reject(error)
+        }
+      )
     }
   } catch (error) {
     log(`⚠️ Failed to add S/4HANA Cloud auth interceptor: ${error}`)
