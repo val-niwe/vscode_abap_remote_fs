@@ -19,6 +19,7 @@ import { readFileSync } from "fs"
 import { createProxy } from "method-call-logger"
 import { mongoApiLogger, mongoHttpLogger, PasswordVault } from "./lib"
 import { oauthLogin } from "./oauth"
+import { s4HanaCloudLoginFetcher } from "./s4hanacloud"
 import { ADTSCHEME } from "./adt/conections"
 import { CallLogger } from "./adt/adtCommLog"
 
@@ -182,7 +183,7 @@ export function createClient(conf: RemoteConfig) {
     ? createSSLConfig(conf.allowSelfSigned, conf.customCA)
     : {}
   sslconf.debugCallback = buildDebugCallback(conf)
-  const password = oauthLogin(conf) || conf.password
+  const password = oauthLogin(conf) || s4HanaCloudLoginFetcher(conf) || conf.password
   const client = new ADTClient(
     conf.url,
     conf.username,
@@ -233,7 +234,8 @@ export class RemoteManager {
       if (!conn) return
 
       // 🔐 SECURITY FIX: Always get password from secure storage only
-      if (!conn.password) {
+      // Skip for S/4HANA Cloud connections which use browser-based SSO
+      if (!conn.password && !conn.s4HanaCloud) {
         conn.password = await this.getPassword(connectionId, conn.username)
       }
 
@@ -281,7 +283,7 @@ export class RemoteManager {
       if (selected.userCancel) return selected
       remote = selected.remote
     }
-    if (remote && !remote.password)
+    if (remote && !remote.password && !remote.s4HanaCloud)
       remote.password = await this.getPassword(formatKey(remote.name), remote.username)
 
     return { remote, userCancel: false }

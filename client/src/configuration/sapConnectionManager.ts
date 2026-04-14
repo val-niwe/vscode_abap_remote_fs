@@ -283,6 +283,11 @@ export class SapConnectionManager {
 
     // IMPORTANT: Password field must be present but empty - actual password stored in OS credential manager
 
+    // S/4HANA Cloud flag
+    if (connection.s4HanaCloud) {
+      cleaned.s4HanaCloud = true
+    }
+
     // Add optional fields only if they have values
     if (connection.atcapprover) cleaned.atcapprover = connection.atcapprover
     if (connection.atcVariant) cleaned.atcVariant = connection.atcVariant
@@ -818,7 +823,8 @@ export class SapConnectionManager {
                             <button id="bulkEditUsernameBtn" class="btn btn-secondary">✏️ Change Username</button>
                             <button id="bulkDeleteBtn" class="btn btn-danger">🗑️ Delete Selected</button>
                         </div>
-                        <button id="addCloudBtn" class="btn btn-secondary">☁️ Add Cloud Connection</button>
+                        <button id="addCloudBtn" class="btn btn-secondary">☁️ Add ABAP Cloud</button>
+                        <button id="addS4HanaBtn" class="btn btn-secondary">🏢 Add S/4HANA Cloud</button>
                         <button id="exportBtn" class="btn btn-secondary">📤 Export Connections</button>
                         <button id="importJsonBtn" class="btn btn-secondary">📥 Import from JSON</button>
                         <button id="addBtn" class="btn btn-primary">➕ Add Application Server</button>
@@ -893,6 +899,19 @@ export class SapConnectionManager {
                 
                 <!-- Import JSON Modal -->
                 <input type="file" id="jsonFileInput" accept=".json" style="display: none;">
+
+                <!-- S/4HANA Cloud Connection Modal -->
+                <div id="s4hanaModal" class="modal" style="display: none;">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h2 id="s4hanaModalTitle">Add S/4HANA Cloud Connection</h2>
+                            <button class="close-btn" id="closeS4HanaBtn">✕</button>
+                        </div>
+                        <form id="s4hanaForm">
+                            ${this.getS4HanaFormHtml()}
+                        </form>
+                    </div>
+                </div>
             </div>
 
             <script nonce="${nonce}">
@@ -1412,6 +1431,80 @@ export class SapConnectionManager {
         `
   }
 
+  private getS4HanaFormHtml() {
+    return `
+            <div id="s4hanaFormError" style="display: none; padding: 12px; margin-bottom: 16px; background: rgba(220, 53, 69, 0.1); border: 1px solid rgba(220, 53, 69, 0.3); color: #dc3545; border-radius: 4px;"></div>
+            
+            <div class="form-section">
+                <h3>Basic Configuration</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="s4h_name">Connection Name *</label>
+                        <input type="text" id="s4h_name" name="s4h_name" required>
+                        <div class="help-text">Unique identifier for this connection</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="s4h_url">Server URL *</label>
+                        <input type="text" id="s4h_url" name="s4h_url" required placeholder="https://my-s4hana-system.s4hana.cloud.sap">
+                        <div class="help-text">S/4HANA Public Cloud system URL. Format: https://domain[:port]</div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="s4h_username">Username</label>
+                        <input type="text" id="s4h_username" name="s4h_username" placeholder="Optional - for informational purposes only">
+                        <div class="help-text">Informational only. Authentication is handled via browser-based SSO.</div>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="s4h_client">Client *</label>
+                        <input type="text" id="s4h_client" name="s4h_client" required pattern="[0-9]{3}" maxlength="3" minlength="3" placeholder="100">
+                        <div class="help-text">3 digit number from 000 to 999</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="s4h_language">Language *</label>
+                        <input type="text" id="s4h_language" name="s4h_language" required pattern="[a-z]{2}" maxlength="2" minlength="2" value="en" style="text-transform: lowercase;">
+                        <div class="help-text">2 lowercase letters (e.g., en, de, fr)</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-section">
+                <h3>Additional Options</h3>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="s4h_diff_formatter">Diff Formatter</label>
+                        <select id="s4h_diff_formatter" name="s4h_diff_formatter">
+                            <option value="ADT formatter">ADT formatter</option>
+                            <option value="AbapLint">AbapLint</option>
+                            <option value="simple">Simple</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="s4h_maxDebugThreads">Max Debug Threads</label>
+                        <input type="number" id="s4h_maxDebugThreads" name="s4h_maxDebugThreads" min="1" max="20" value="4">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="s4h_atcapprover">ATC Approver</label>
+                        <input type="text" id="s4h_atcapprover" name="s4h_atcapprover" placeholder="Optional">
+                    </div>
+                    <div class="form-group">
+                        <label for="s4h_atcVariant">ATC Variant</label>
+                        <input type="text" id="s4h_atcVariant" name="s4h_atcVariant" placeholder="Optional">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button type="button" class="btn btn-secondary" id="cancelS4HanaBtn">Cancel</button>
+                <button type="submit" class="btn btn-primary">\uD83D\uDCBE Save S/4HANA Cloud Connection</button>
+            </div>
+        `
+  }
+
   private getScript() {
     return `
             const vscode = acquireVsCodeApi();
@@ -1441,6 +1534,11 @@ export class SapConnectionManager {
                         if (modal && modal.style.display === 'flex') {
                             closeEditor();
                         }
+                        // Close S/4HANA modal on successful save
+                        const s4hModal = document.getElementById('s4hanaModal');
+                        if (s4hModal && s4hModal.style.display === 'flex') {
+                            closeS4HanaModal();
+                        }
                         break;
                     case 'error':
                         showMessage(message.message, 'error');
@@ -1451,6 +1549,12 @@ export class SapConnectionManager {
                         if (formError) {
                             formError.textContent = message.message;
                             formError.style.display = 'block';
+                        }
+                        // Also show in S/4HANA form if it's open
+                        const s4hFormError = document.getElementById('s4hanaFormError');
+                        if (s4hFormError) {
+                            s4hFormError.textContent = message.message;
+                            s4hFormError.style.display = 'block';
                         }
                         break;
                     case 'testResult':
@@ -1474,6 +1578,7 @@ export class SapConnectionManager {
                 // Header buttons
                 document.getElementById('addBtn').addEventListener('click', () => openEditor());
                 document.getElementById('addCloudBtn').addEventListener('click', () => openCloudModal());
+                document.getElementById('addS4HanaBtn').addEventListener('click', () => openS4HanaModal());
                 document.getElementById('exportBtn').addEventListener('click', () => exportConnections());
                 document.getElementById('importJsonBtn').addEventListener('click', () => document.getElementById('jsonFileInput').click());
                 
@@ -1540,6 +1645,22 @@ export class SapConnectionManager {
                     cloudTypeSelect.addEventListener('change', handleCloudTypeChange);
                 }
                 
+                // S/4HANA Cloud modal event listeners
+                const closeS4HanaBtn = document.getElementById('closeS4HanaBtn');
+                if (closeS4HanaBtn) {
+                    closeS4HanaBtn.addEventListener('click', closeS4HanaModal);
+                }
+                
+                const cancelS4HanaBtn = document.getElementById('cancelS4HanaBtn');
+                if (cancelS4HanaBtn) {
+                    cancelS4HanaBtn.addEventListener('click', closeS4HanaModal);
+                }
+                
+                const s4hanaForm = document.getElementById('s4hanaForm');
+                if (s4hanaForm) {
+                    s4hanaForm.addEventListener('submit', handleS4HanaFormSubmit);
+                }
+                
                 // Event delegation for table buttons (since they're dynamically created)
                 document.getElementById('connectionsList').addEventListener('click', (e) => {
                     const target = e.target.closest('button');
@@ -1579,6 +1700,7 @@ export class SapConnectionManager {
                             <tr>
                                 <th><input type="checkbox" id="selectAll"></th>
                                 <th>Name</th>
+                                <th>Type</th>
                                 <th>URL</th>
                                 <th>Username</th>
                                 <th>Client</th>
@@ -1596,6 +1718,7 @@ export class SapConnectionManager {
                                 <tr>
                                     <td><input type="checkbox" class="row-checkbox" data-name="\${name}"></td>
                                     <td><span class="connection-name">\${escapeHtml(name)}</span></td>
+                                    <td><span class="gui-badge">\${conn.s4HanaCloud ? '🏢 S/4HANA' : conn.oauth ? '☁️ Cloud' : '🖥️ App Server'}</span></td>
                                     <td>\${escapeHtml(conn.url || '')}</td>
                                     <td>\${escapeHtml(conn.username || '')}</td>
                                     <td>\${escapeHtml(conn.client || '')}</td>
@@ -2073,6 +2196,105 @@ export class SapConnectionManager {
                 return div.innerHTML;
             }
 
+            // S/4HANA Cloud modal functions
+            function openS4HanaModal() {
+                const modal = document.getElementById('s4hanaModal');
+                const form = document.getElementById('s4hanaForm');
+                const formError = document.getElementById('s4hanaFormError');
+                
+                if (formError) {
+                    formError.style.display = 'none';
+                    formError.textContent = '';
+                }
+                
+                if (form) form.reset();
+                
+                // Set defaults
+                const langField = document.getElementById('s4h_language');
+                if (langField) langField.value = 'en';
+                const diffField = document.getElementById('s4h_diff_formatter');
+                if (diffField) diffField.value = 'ADT formatter';
+                const threadsField = document.getElementById('s4h_maxDebugThreads');
+                if (threadsField) threadsField.value = '4';
+                
+                modal.style.display = 'flex';
+            }
+
+            function closeS4HanaModal() {
+                document.getElementById('s4hanaModal').style.display = 'none';
+            }
+
+            function handleS4HanaFormSubmit(e) {
+                e.preventDefault();
+                
+                const formError = document.getElementById('s4hanaFormError');
+                formError.style.display = 'none';
+                formError.textContent = '';
+                
+                const name = document.getElementById('s4h_name').value.trim();
+                const url = document.getElementById('s4h_url').value.trim();
+                const username = document.getElementById('s4h_username').value.trim();
+                const client = document.getElementById('s4h_client').value.trim();
+                const language = (document.getElementById('s4h_language').value || 'en').toLowerCase();
+                const diff_formatter = document.getElementById('s4h_diff_formatter').value || 'ADT formatter';
+                const maxDebugThreads = parseInt(document.getElementById('s4h_maxDebugThreads').value) || 4;
+                const atcapprover = document.getElementById('s4h_atcapprover').value.trim();
+                const atcVariant = document.getElementById('s4h_atcVariant').value.trim();
+                
+                // Validate required fields
+                if (!name || name.length < 3) {
+                    formError.textContent = 'Connection name must be at least 3 characters long';
+                    formError.style.display = 'block';
+                    return;
+                }
+                
+                if (!name.match(/^[\\w\\d\\-_]+$/i)) {
+                    formError.textContent = 'Connection name can only contain letters, numbers, - and _';
+                    formError.style.display = 'block';
+                    return;
+                }
+                
+                // Validate URL
+                if (url) {
+                    try {
+                        const urlObj = new URL(url);
+                        if (urlObj.protocol !== 'https:') {
+                            formError.textContent = 'S/4HANA Cloud URL must use HTTPS';
+                            formError.style.display = 'block';
+                            return;
+                        }
+                    } catch (err) {
+                        formError.textContent = 'Invalid URL format. Expected: https://domain[:port]';
+                        formError.style.display = 'block';
+                        return;
+                    }
+                }
+                
+                const connection = {
+                    url: url,
+                    username: username || 'SSO_USER',
+                    password: '',
+                    client: client,
+                    language: language,
+                    allowSelfSigned: false,
+                    diff_formatter: diff_formatter,
+                    maxDebugThreads: maxDebugThreads,
+                    s4HanaCloud: true,
+                    atcapprover: atcapprover || undefined,
+                    atcVariant: atcVariant || undefined
+                };
+                
+                vscode.postMessage({
+                    type: 'saveConnection',
+                    connectionId: name,
+                    connection: connection,
+                    target: currentTarget,
+                    isEdit: false
+                });
+                
+                // Close modal will happen on success message
+            }
+
             // Make functions globally accessible
             window.openEditor = openEditor;
             window.closeEditor = closeEditor;
@@ -2080,6 +2302,8 @@ export class SapConnectionManager {
             window.deleteConnection = deleteConnection;
             window.openCloudModal = openCloudModal;
             window.closeCloudModal = closeCloudModal;
+            window.openS4HanaModal = openS4HanaModal;
+            window.closeS4HanaModal = closeS4HanaModal;
             window.processCloudConnection = processCloudConnection;
             window.handleCloudTypeChange = handleCloudTypeChange;
         `

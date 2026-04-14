@@ -6,6 +6,7 @@ import { LogOutPendingDebuggers } from "./debugger"
 import { SapSystemValidator } from "../services/sapSystemValidator"
 import { LocalFsProvider } from "../fs/LocalFsProvider"
 import { log } from "../lib"
+import { clearSsoSession } from "../s4hanacloud"
 export const ADTSCHEME = "adt"
 export const ADTURIPATTERN = /\/sap\/bc\/adt\//
 
@@ -35,44 +36,32 @@ async function create(connId: string) {
   log(`✅ SAP system validation passed for: ${connId}`)
 
   let client
-  if (connection.oauth || connection.password) {
+  if (connection.s4HanaCloud) {
+    // S/4HANA Cloud: uses browser-based SSO via re-entrance ticket
+    // The s4HanaCloudLoginFetcher is integrated via createClient()
+    // which passes it as a BearerFetcher to ADTClient
+    log(`☁️ Connecting to S/4HANA Cloud system: ${connId}`)
+    client = createClient(connection)
+    try {
+      await client.login()
+      await client.statelessClone.login()
+    } catch (loginError) {
+      // If SSO session expired, clear it and retry
+      clearSsoSession(connId)
+      client = createClient(connection)
+      await client.login()
+      await client.statelessClone.login()
+    }
+
+    // Fix LIKE issue: Add Content-Type header for SQL queries
+    addContentTypeInterceptor(client)
+    addContentTypeInterceptor(client.statelessClone)
+  } else if (connection.oauth || connection.password) {
     client = createClient(connection)
     await client.login() // raise exception for login issues
     await client.statelessClone.login()
 
     // Fix LIKE issue: Add Content-Type header for SQL queries
-    const addContentTypeInterceptor = (adtClient: ADTClient) => {
-      try {
-        // Safely access the internal axios instance with proper error handling
-        const httpClient = adtClient.httpClient as any
-        if (
-          httpClient &&
-          typeof httpClient === "object" &&
-          httpClient.httpclient &&
-          typeof httpClient.httpclient === "object" &&
-          httpClient.httpclient.axios &&
-          typeof httpClient.httpclient.axios.interceptors === "object"
-        ) {
-          httpClient.httpclient.axios.interceptors.request.use((config: any) => {
-            // Validate config object structure
-            if (!config || typeof config !== "object") {
-              return config
-            }
-
-            // Only modify specific datapreview requests
-            if (typeof config.url === "string" && config.url.includes("/datapreview/freestyle")) {
-              config.headers = config.headers || {}
-              config.headers["Content-Type"] = "text/plain"
-            }
-            return config
-          })
-        }
-      } catch (error) {
-        // Log error but don't break connection establishment
-        log(`⚠️ Failed to add Content-Type interceptor: ${error}`)
-      }
-    }
-
     addContentTypeInterceptor(client)
     addContentTypeInterceptor(client.statelessClone)
   } else {
@@ -86,38 +75,6 @@ async function create(connId: string) {
     await manager.savePassword(name, username, password)
 
     // Fix LIKE issue: Add Content-Type header for SQL queries
-    const addContentTypeInterceptor = (adtClient: ADTClient) => {
-      try {
-        // Safely access the internal axios instance with proper error handling
-        const httpClient = adtClient.httpClient as any
-        if (
-          httpClient &&
-          typeof httpClient === "object" &&
-          httpClient.httpclient &&
-          typeof httpClient.httpclient === "object" &&
-          httpClient.httpclient.axios &&
-          typeof httpClient.httpclient.axios.interceptors === "object"
-        ) {
-          httpClient.httpclient.axios.interceptors.request.use((config: any) => {
-            // Validate config object structure
-            if (!config || typeof config !== "object") {
-              return config
-            }
-
-            // Only modify specific datapreview requests
-            if (typeof config.url === "string" && config.url.includes("/datapreview/freestyle")) {
-              config.headers = config.headers || {}
-              config.headers["Content-Type"] = "text/plain"
-            }
-            return config
-          })
-        }
-      } catch (error) {
-        // Log error but don't break connection establishment
-        log(`⚠️ Failed to add Content-Type interceptor: ${error}`)
-      }
-    }
-
     addContentTypeInterceptor(client)
     addContentTypeInterceptor(client.statelessClone)
   }
@@ -127,6 +84,36 @@ async function create(connId: string) {
   const newRoot = new Root(connId, service)
   roots.set(connId, newRoot)
   clients.set(connId, client)
+}
+
+/**
+ * Add Content-Type header interceptor for SQL datapreview requests (LIKE issue fix)
+ */
+function addContentTypeInterceptor(adtClient: ADTClient) {
+  try {
+    const httpClient = adtClient.httpClient as any
+    if (
+      httpClient &&
+      typeof httpClient === "object" &&
+      httpClient.httpclient &&
+      typeof httpClient.httpclient === "object" &&
+      httpClient.httpclient.axios &&
+      typeof httpClient.httpclient.axios.interceptors === "object"
+    ) {
+      httpClient.httpclient.axios.interceptors.request.use((config: any) => {
+        if (!config || typeof config !== "object") {
+          return config
+        }
+        if (typeof config.url === "string" && config.url.includes("/datapreview/freestyle")) {
+          config.headers = config.headers || {}
+          config.headers["Content-Type"] = "text/plain"
+        }
+        return config
+      })
+    }
+  } catch (error) {
+    log(`⚠️ Failed to add Content-Type interceptor: ${error}`)
+  }
 }
 
 function createIfMissing(connId: string) {
