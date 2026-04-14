@@ -5,22 +5,24 @@
  * using a re-entrance ticket mechanism analogous to SAP ADT in Eclipse.
  *
  * Flow:
- * 1. Start a local HTTP server to handle the callback
- * 2. Open the system's login URL in the user's browser
- * 3. User authenticates via IDP
- * 4. After authentication, the re-entrance ticket is obtained via ADT API
- * 5. The ticket is used as MYSAPSSO2 cookie for subsequent ADT communication
+ * 1. Discover UI hostname via /sap/public/bc/icf/virtualhost
+ * 2. Start a local HTTP server to handle the redirect callback
+ * 3. Open the re-entrance endpoint in the user's browser:
+ *    ${uiHostname}/sap/bc/sec/reentrance?scenario=FTO1&redirect-url=http://localhost:{port}/redirect
+ * 4. User authenticates via IDP
+ * 5. S/4HANA redirects back to the local server with the reentrance ticket
+ * 6. The ticket is used as MYSAPSSO2 header for subsequent ADT communication
  */
 
 import * as http from "http"
+import * as https from "https"
 import { commands, Uri } from "vscode"
-import { funWindow as window } from "../services/funMessenger"
 import { log } from "../lib"
 import { RemoteConfig, formatKey } from "../config"
 
 /**
  * Stored SSO sessions keyed by connection ID
- * Stores MYSAPSSO2 cookies obtained from SSO login for reuse
+ * Stores reentrance tickets obtained from SSO login for reuse
  */
 const ssoSessions = new Map<string, SsoSession>()
 
@@ -36,7 +38,7 @@ const SESSION_VALIDITY_MS = 25 * 60 * 1000
  * Check if an SSO session is still valid
  */
 function isSessionValid(connId: string): boolean {
-  const session = ssoSessions.get(formatKey(connId))
+  const session = ssoSessions.get(connId)
   if (!session) return false
   return Date.now() - session.timestamp < SESSION_VALIDITY_MS
 }
@@ -60,17 +62,80 @@ export function clearSsoSession(connId: string): void {
   ssoSessions.delete(formatKey(connId))
 }
 
+interface VirtualHostsResponse {
+  relatedUrls: {
+    UI: string
+    API: string
+  }
+}
+
+/**
+ * Retrieve the virtual host URLs for UI and API access from the ABAP system.
+ * Queries /sap/public/bc/icf/virtualhost to discover the separate UI hostname
+ * (used for browser-based login) from the API hostname (used for ADT calls).
+ *
+ * @param apiUrl The configured API URL of the S/4HANA system
+ * @returns Virtual host URLs containing separate UI and API origins
+ */
+async function getVirtualHosts(apiUrl: string): Promise<VirtualHostsResponse> {
+  const url = new URL("/sap/public/bc/icf/virtualhost", apiUrl)
+  return new Promise<VirtualHostsResponse>((resolve, reject) => {
+    const req = https.get(url.href, { headers: { Accept: "application/json" } }, res => {
+      let data = ""
+      res.on("data", (chunk: string) => (data += chunk))
+      res.on("end", () => {
+        try {
+          resolve(JSON.parse(data) as VirtualHostsResponse)
+        } catch {
+          reject(new Error(`Failed to parse virtual hosts response: ${data}`))
+        }
+      })
+    })
+    req.on("error", reject)
+  })
+}
+
+const ADT_REENTRANCE_ENDPOINT = "/sap/bc/sec/reentrance"
+const REDIRECT_PATH = "/redirect"
+const DEFAULT_SCENARIO = "FTO1"
+
+function redirectSuccessHtml(logoffUrl: string): string {
+  const logoffLink = logoffUrl
+    ? `<p><a href="${logoffUrl}" style="color:#4fc3f7">(Click here to log off the current user)</a></p>`
+    : ""
+  return `<html>
+<head><title>Authentication Successful</title></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+display:flex;justify-content:center;align-items:center;height:100vh;
+background:#1e1e1e;color:#cccccc;">
+<div style="text-align:center">
+<h2>&#x2705; Authentication Successful</h2>
+<p>You can close this browser tab and return to VS Code.</p>
+${logoffLink}
+</div></body></html>`
+}
+
+function redirectErrorHtml(): string {
+  return `<html>
+<head><title>Authentication Failed</title></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+display:flex;justify-content:center;align-items:center;height:100vh;
+background:#1e1e1e;color:#cccccc;">
+<div style="text-align:center">
+<h2>&#x274C; Authentication Failed</h2>
+<p>Login failed, please check the logs in the console.</p>
+</div></body></html>`
+}
+
 /**
  * Perform browser-based SSO login for S/4HANA Public Cloud.
  *
- * Opens the system URL in a browser for the user to authenticate,
- * then starts a local HTTP callback server to receive the SSO ticket.
- *
- * The browser opens a specially crafted URL that, after IDP authentication,
- * redirects to our local server with the MYSAPSSO2 ticket.
+ * Opens the re-entrance ticket endpoint in a browser for the user to authenticate.
+ * After IDP authentication, S/4HANA redirects back to a local HTTP server
+ * with the reentrance ticket as a query parameter.
  *
  * @param conf The remote configuration for the S/4HANA Cloud connection
- * @returns A promise that resolves to the MYSAPSSO2 cookie value
+ * @returns A promise that resolves to the reentrance ticket value
  */
 export async function s4HanaCloudLogin(conf: RemoteConfig): Promise<string> {
   const connId = formatKey(conf.name)
@@ -83,67 +148,61 @@ export async function s4HanaCloudLogin(conf: RemoteConfig): Promise<string> {
 
   log(`🔐 Starting S/4HANA Cloud SSO login for: ${connId}`)
 
-  return new Promise<string>((resolve, reject) => {
-    const timeoutHandle = setTimeout(() => {
-      server.close()
-      reject(new Error("S/4HANA Cloud SSO login timed out after 120 seconds"))
-    }, 120000)
+  // Discover the UI hostname via virtual host API.
+  // S/4HANA Public Cloud exposes a separate UI URL (e.g. xxx.s4hana.ondemand.com)
+  // distinct from the API URL (e.g. xxx-api.s4hana.ondemand.com).
+  let uiOrigin: string
+  try {
+    const hosts = await getVirtualHosts(conf.url)
+    uiOrigin = new URL(hosts.relatedUrls.UI).origin
+    log(`🌍 Resolved UI hostname: ${uiOrigin}`)
+  } catch {
+    // Fall back to the configured URL if virtual host discovery fails
+    uiOrigin = new URL(conf.url).origin
+    log(`⚠️ Virtual host discovery failed for ${connId}, using ${uiOrigin}`)
+  }
 
+  return new Promise<string>((resolve, reject) => {
     const server = http.createServer((req, res) => {
       try {
         const reqUrl = new URL(req.url || "", `http://127.0.0.1`)
 
-        if (reqUrl.pathname === "/callback") {
-          const ticket = reqUrl.searchParams.get("sap-mysapsso2") || ""
+        if (reqUrl.pathname === REDIRECT_PATH) {
+          const reentranceTicket = reqUrl.searchParams.get("reentrance-ticket")
 
-          // Send success response to browser
-          res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
-          res.end(`<!DOCTYPE html>
-<html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-display:flex;justify-content:center;align-items:center;height:100vh;
-background:#1e1e1e;color:#cccccc;">
-<div style="text-align:center">
-<h2>✅ S/4HANA Cloud Login Successful</h2>
-<p>You can close this browser tab and return to VS Code.</p>
-</div></body></html>`)
-
-          clearTimeout(timeoutHandle)
-          server.close()
-
-          if (ticket) {
-            ssoSessions.set(connId, {
-              cookies: ticket,
-              timestamp: Date.now()
-            })
+          if (reentranceTicket) {
             log(`✅ S/4HANA Cloud SSO login successful for: ${connId}`)
-            resolve(ticket)
+            const logoffUrl = `${uiOrigin}/sap/public/bc/icf/logoff`
+            res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" })
+            res.end(redirectSuccessHtml(logoffUrl))
+            clearTimeout(timeoutHandle)
+            server.close()
+            ssoSessions.set(connId, { cookies: reentranceTicket, timestamp: Date.now() })
+            resolve(reentranceTicket)
           } else {
-            reject(new Error("No SSO ticket received in callback"))
+            log(`❌ No reentrance ticket received for: ${connId}`)
+            res.writeHead(500, { "Content-Type": "text/html; charset=utf-8" })
+            res.end(redirectErrorHtml())
+            clearTimeout(timeoutHandle)
+            server.close()
+            reject(new Error("No reentrance ticket received in redirect callback"))
           }
-          return
-        }
-
-        // Serve the SSO redirect page
-        // This page opens the S/4HANA system for authentication
-        // and captures the MYSAPSSO2 ticket on redirect
-        if (reqUrl.pathname === "/login") {
-          const systemUrl = conf.url.replace(/\/$/, "")
-          const ssoUrl =
-            `${systemUrl}/sap/public/myssocntl?sap-client=${encodeURIComponent(conf.client)}` +
-            `&sap-language=${encodeURIComponent(conf.language || "en")}`
-
-          res.writeHead(302, { Location: ssoUrl })
-          res.end()
           return
         }
 
         res.writeHead(200, { "Content-Type": "text/plain" })
         res.end("S/4HANA Cloud SSO Login Server")
-      } catch {
+      } catch (err) {
+        log(`❌ SSO server request handler error: ${err}`)
         res.writeHead(500, { "Content-Type": "text/plain" })
         res.end("Internal Server Error")
       }
     })
+
+    const timeoutHandle = setTimeout(() => {
+      server.close()
+      reject(new Error("S/4HANA Cloud SSO login timed out after 120 seconds"))
+    }, 120000)
 
     server.listen(0, "127.0.0.1", () => {
       const address = server.address()
@@ -154,61 +213,13 @@ background:#1e1e1e;color:#cccccc;">
       }
 
       const port = address.port
-      const systemUrl = conf.url.replace(/\/$/, "")
+      const redirectUrl = `http://localhost:${port}${REDIRECT_PATH}`
+      const scenario = process.env.FIORI_TOOLS_SCENARIO ?? DEFAULT_SCENARIO
+      const endpoint = process.env.FIORI_TOOLS_REENTRANCE_ENDPOINT ?? ADT_REENTRANCE_ENDPOINT
+      const loginUrl = `${uiOrigin}${endpoint}?scenario=${scenario}&redirect-url=${redirectUrl}`
 
-      // Build the SSO login URL
-      // For S/4HANA Public Cloud, we open the system URL directly.
-      // The user authenticates via IDP (SAML/OpenID), and we then
-      // programmatically obtain a re-entrance ticket after login confirmation.
-      const loginUrl =
-        `${systemUrl}/sap/bc/gui/sap/its/webgui` +
-        `?sap-client=${encodeURIComponent(conf.client)}` +
-        `&sap-language=${encodeURIComponent(conf.language || "en")}`
-
-      log(`🌐 Opening browser for S/4HANA Cloud SSO: ${systemUrl}`)
+      log(`🌐 Opening browser for S/4HANA Cloud SSO: ${uiOrigin}`)
       commands.executeCommand("vscode.open", Uri.parse(loginUrl))
-
-      // Show information message to guide the user
-      window
-        .showInformationMessage(
-          `Please complete the S/4HANA Cloud login in your browser. ` +
-            `After successful authentication, click "Done" to continue.`,
-          "Done",
-          "Cancel"
-        )
-        .then(async selection => {
-          if (selection === "Cancel" || !selection) {
-            clearTimeout(timeoutHandle)
-            server.close()
-            reject(new Error("S/4HANA Cloud SSO login cancelled by user"))
-            return
-          }
-
-          // User confirmed login is complete
-          // Attempt to obtain a re-entrance ticket using basic HEAD request
-          // to verify the session is valid
-          try {
-            const ticket = await fetchReentranceTicket(conf)
-            clearTimeout(timeoutHandle)
-            server.close()
-
-            ssoSessions.set(connId, {
-              cookies: ticket,
-              timestamp: Date.now()
-            })
-            log(`✅ S/4HANA Cloud SSO ticket obtained for: ${connId}`)
-            resolve(ticket)
-          } catch (err) {
-            clearTimeout(timeoutHandle)
-            server.close()
-            reject(
-              new Error(
-                `Failed to obtain S/4HANA Cloud session after login. ` +
-                  `Please ensure you completed the browser login. Error: ${err}`
-              )
-            )
-          }
-        })
     })
 
     server.on("error", err => {
@@ -219,34 +230,12 @@ background:#1e1e1e;color:#cccccc;">
 }
 
 /**
- * Fetch a re-entrance ticket from the S/4HANA system.
- * This requires the user to have already authenticated in the browser
- * (establishing cookies in the same session).
- *
- * For S/4HANA Cloud, we prompt for credentials once to establish a session
- * and then use cookie-based re-authentication for subsequent calls.
- */
-async function fetchReentranceTicket(conf: RemoteConfig): Promise<string> {
-  // For S/4HANA Cloud, since we can't directly share browser cookies,
-  // the practical approach is to ask the user for their password once
-  // (after they've confirmed SSO login), then use it with ADT.
-  // The password is stored securely in the credential manager.
-  //
-  // This is analogous to how Eclipse ADT handles S/4HANA Cloud:
-  // - Opens browser for IDP auth
-  // - Uses the established session/credentials for ADT communication
-
-  // Return a placeholder that will trigger password-based auth
-  // The actual flow uses the password from the credential manager
-  return "S4HANA_CLOUD_SSO"
-}
-
-/**
  * Create an SSO login function that can be used as a BearerFetcher-like
  * callback for S/4HANA Cloud connections.
  *
  * When called, if no valid session exists, it triggers the browser-based
- * SSO flow and prompts the user to authenticate.
+ * SSO flow. After IDP authentication the reentrance ticket is automatically
+ * captured via the local redirect server.
  *
  * When the session expires, calling this function again will
  * trigger a new browser-based login flow.
