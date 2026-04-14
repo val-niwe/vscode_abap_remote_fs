@@ -37,11 +37,14 @@ async function create(connId: string) {
 
   let client
   if (connection.s4HanaCloud) {
-    // S/4HANA Cloud: uses browser-based SSO via re-entrance ticket
-    // The s4HanaCloudLoginFetcher is integrated via createClient()
-    // which passes it as a BearerFetcher to ADTClient
+    // S/4HANA Cloud: uses browser-based SSO via re-entrance ticket.
+    // The BearerFetcher returns the ticket, ADTClient sets
+    // "Authorization: bearer <ticket>" on each request.  We intercept that
+    // and replace it with "MYSAPSSO2: <ticket>" which S/4HANA Cloud requires.
     log(`☁️ Connecting to S/4HANA Cloud system: ${connId}`)
     client = createClient(connection)
+    addS4HanaCloudAuthInterceptor(client)
+    addS4HanaCloudAuthInterceptor(client.statelessClone)
     try {
       await client.login()
       await client.statelessClone.login()
@@ -49,6 +52,8 @@ async function create(connId: string) {
       // If SSO session expired, clear it and retry
       clearSsoSession(connId)
       client = createClient(connection)
+      addS4HanaCloudAuthInterceptor(client)
+      addS4HanaCloudAuthInterceptor(client.statelessClone)
       await client.login()
       await client.statelessClone.login()
     }
@@ -113,6 +118,46 @@ function addContentTypeInterceptor(adtClient: ADTClient) {
     }
   } catch (error) {
     log(`⚠️ Failed to add Content-Type interceptor: ${error}`)
+  }
+}
+
+/**
+ * Add an axios interceptor that converts ADTClient's Bearer token auth to
+ * the MYSAPSSO2 header required by S/4HANA Public Cloud.
+ *
+ * ADTClient uses the BearerFetcher to obtain the reentrance ticket and sets
+ * "Authorization: bearer <ticket>" on every request before passing it to
+ * the underlying axios instance.  Our interceptor runs at that point and
+ * replaces the header with "MYSAPSSO2: <ticket>" plus the session-create hint.
+ */
+function addS4HanaCloudAuthInterceptor(adtClient: ADTClient) {
+  try {
+    const httpClient = adtClient.httpClient as any
+    if (
+      httpClient &&
+      typeof httpClient === "object" &&
+      httpClient.httpclient &&
+      typeof httpClient.httpclient === "object" &&
+      httpClient.httpclient.axios &&
+      typeof httpClient.httpclient.axios.interceptors === "object"
+    ) {
+      httpClient.httpclient.axios.interceptors.request.use((config: any) => {
+        if (!config || typeof config !== "object") return config
+        const headers = config.headers || {}
+        const auth: unknown = headers.Authorization || headers.authorization
+        if (typeof auth === "string" && auth.toLowerCase().startsWith("bearer ")) {
+          const ticket = auth.substring(7)
+          delete headers.Authorization
+          delete headers.authorization
+          headers.MYSAPSSO2 = ticket
+          headers["x-sap-security-session"] = "create"
+          config.headers = headers
+        }
+        return config
+      })
+    }
+  } catch (error) {
+    log(`⚠️ Failed to add S/4HANA Cloud auth interceptor: ${error}`)
   }
 }
 
