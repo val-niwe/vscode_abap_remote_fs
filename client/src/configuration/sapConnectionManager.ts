@@ -863,7 +863,7 @@ export class SapConnectionManager {
                 <div id="cloudModal" class="modal" style="display: none;">
                     <div class="modal-content" style="max-width: 700px;">
                         <div class="modal-header">
-                            <h2 id="cloudModalTitle">Add Cloud Connection</h2>
+                            <h2 id="cloudModalTitle">Add ABAP Cloud Connection</h2>
                             <button class="close-btn" id="closeCloudBtn">✕</button>
                         </div>
                         <div style="padding: 20px;">
