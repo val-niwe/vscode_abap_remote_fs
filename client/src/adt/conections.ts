@@ -6,7 +6,7 @@ import { LogOutPendingDebuggers } from "./debugger"
 import { SapSystemValidator } from "../services/sapSystemValidator"
 import { LocalFsProvider } from "../fs/LocalFsProvider"
 import { log } from "../lib"
-import { attachReentranceTicketLogin } from "../auth/reentranceTicket"
+import { attachReentranceTicketLogin, syncReentranceSession } from "../auth/reentranceTicket"
 export const ADTSCHEME = "adt"
 export const ADTURIPATTERN = /\/sap\/bc\/adt\//
 
@@ -49,7 +49,8 @@ async function create(connId: string) {
     }
 
     await client.login() // raise exception for login issues
-    await client.statelessClone.login()
+    if (isReentranceTicket) syncReentranceSession(client, client.statelessClone)
+    else await client.statelessClone.login()
 
     // Fix LIKE issue: Add Content-Type header for SQL queries
     const addContentTypeInterceptor = (adtClient: ADTClient) => {

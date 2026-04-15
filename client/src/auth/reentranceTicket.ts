@@ -6,6 +6,8 @@ import { log } from "../lib"
 const DEFAULT_TIMEOUT = 60 * 1000
 const ADT_REENTRANCE_ENDPOINT = "/sap/bc/sec/reentrance"
 const REDIRECT_PATH = "/redirect"
+const FETCH_CSRF_TOKEN = "fetch"
+const SESSION_COOKIE_MARKER = "SAP_SESSIONID"
 
 interface VirtualHostPayload {
   relatedUrls?: {
@@ -31,6 +33,28 @@ const isUnauthorized = (error: unknown): boolean => {
     return true
   }
   return `${error}`.includes("401")
+}
+
+const hasSessionCookie = (h: any) => `${h.ascookies?.() || ""}`.includes(SESSION_COOKIE_MARKER)
+
+const updateBaseUrl = (h: any, baseURL: string) => {
+  h.baseURL = baseURL
+  if (h.httpclient) {
+    h.httpclient.baseURL = baseURL
+    if (h.httpclient.axios?.defaults) {
+      h.httpclient.axios.defaults.baseURL = baseURL
+    }
+  }
+}
+
+export function syncReentranceSession(sourceClient: ADTClient, targetClient: ADTClient) {
+  const source = (sourceClient.httpClient as any) || {}
+  const target = (targetClient.httpClient as any) || {}
+
+  updateBaseUrl(target, source.baseURL)
+  target.cookie = new Map(source.cookie || [])
+  target.csrfToken = source.csrfToken
+  target.__reentranceSessionEstablished = source.__reentranceSessionEstablished
 }
 
 async function readVirtualHosts(h: any, backendUrl: string): Promise<ReentranceBackend> {
@@ -135,11 +159,23 @@ export function attachReentranceTicketLogin(client: ADTClient) {
   if (h.__reentranceTicketPatched) {
     return
   }
+
+  Object.defineProperty(h, "loggedin", {
+    configurable: true,
+    get() {
+      return !!this.__reentranceSessionEstablished || this.csrfToken !== FETCH_CSRF_TOKEN
+    }
+  })
+
   h.__reentranceTicketPatched = true
 
   h.login = async function reentranceLogin(forceFreshTicket = false) {
     if (this.loginPromise) {
       return this.loginPromise
+    }
+
+    if (!forceFreshTicket && this.__reentranceSessionEstablished && hasSessionCookie(this)) {
+      return
     }
 
     this.auth = undefined
@@ -148,25 +184,38 @@ export function attachReentranceTicketLogin(client: ADTClient) {
     const qs: Record<string, string> = {}
     if (this.client) qs["sap-client"] = this.client
     if (this.language) qs["sap-language"] = this.language
-    this.csrfToken = "fetch"
+    this.csrfToken = FETCH_CSRF_TOKEN
 
     const runLogin = async (forceNewTicket: boolean) => {
-      const hasSessionCookie = !forceNewTicket && this.ascookies().includes("SAP_SESSIONID")
       const headers: Record<string, string> = {}
+      const hasExistingSession = !forceNewTicket && hasSessionCookie(this)
 
-      if (!hasSessionCookie) {
+      if (!hasExistingSession) {
         this.cookie.clear()
+        this.__reentranceSessionEstablished = false
         const backend = await readVirtualHosts(this, this.baseURL)
         const reentranceTicket = await getReentranceTicket(backend)
-        this.baseURL = backend.apiHostname
+        updateBaseUrl(this, backend.apiHostname)
         headers.MYSAPSSO2 = reentranceTicket
         headers["x-sap-security-session"] = "create"
       }
 
-      return this._request("/sap/bc/adt/compatibility/graph", {
+      const response = await this._request("/sap/bc/adt/compatibility/graph", {
         qs,
         headers
       })
+
+      if (!hasSessionCookie(this)) {
+        throw new Error("S/4HANA Cloud SSO login did not return an SAP session cookie")
+      }
+
+      this.__reentranceSessionEstablished = true
+
+      if (this.csrfToken === FETCH_CSRF_TOKEN) {
+        await this._request("/sap/bc/adt/compatibility/graph", { qs })
+      }
+
+      return response
     }
 
     try {
@@ -174,6 +223,7 @@ export function attachReentranceTicketLogin(client: ADTClient) {
         if (!forceFreshTicket && isUnauthorized(error)) {
           this.cookie.clear()
           this.bearer = undefined
+          this.__reentranceSessionEstablished = false
           return runLogin(true)
         }
         throw error
