@@ -41,7 +41,7 @@ import {
 } from "../lib"
 
 interface SimpleSource extends QuickPickItem {
-  key: "LOADKEY" | "MANUAL" | "NONCLOUD"
+  key: "LOADKEY" | "MANUAL" | "NONCLOUD" | "S4HANACLOUD"
 }
 interface UrlSource extends QuickPickItem {
   key: "URL"
@@ -50,14 +50,15 @@ interface UrlSource extends QuickPickItem {
 type Source = SimpleSource | UrlSource
 const CONFIGSOURCES: Source[] = [
   { label: "Known application server", key: "NONCLOUD" },
-  { label: "Cloud instance - load service key from file", key: "LOADKEY" },
+  { label: "S/4HANA Public Cloud (SSO)", key: "S4HANACLOUD" },
+  { label: "ABAP Cloud - load service key from file", key: "LOADKEY" },
   {
-    label: "Cloud instance - Europe trial",
+    label: "ABAP Cloud - Europe trial",
     key: "URL",
     url: "https://api.cf.eu10.hana.ondemand.com"
   },
-  { label: "Cloud instance - USA trial", key: "URL", url: "https://api.cf.us10.hana.ondemand.com" },
-  { label: "Cloud instance - enter connection endpoint", key: "MANUAL" }
+  { label: "ABAP Cloud - USA trial", key: "URL", url: "https://api.cf.us10.hana.ondemand.com" },
+  { label: "ABAP Cloud - enter connection endpoint", key: "MANUAL" }
 ]
 
 const loadFile = (u: Uri): RfsTaskEither<string> =>
@@ -250,6 +251,40 @@ const localConfig = () =>
     })
   )
 
+const s4HanaCloudConfig = () =>
+  pipe(
+    rfsTaskEither({}),
+    bind("url", () =>
+      inputBox({
+        prompt: "S/4HANA Cloud system URL",
+        value: "https://",
+        validateInput: (url: string) =>
+          url && url.match(/^https:\/\/[\w.\-]+(:\d+)?$/i)
+            ? ""
+            : "Format: https://domain[:port] (e.g., https://my-system.s4hana.cloud.sap)"
+      })
+    ),
+    bind("username", () =>
+      inputBox({ prompt: "Username (informational only, SSO will be used for authentication)" })
+    ),
+    bind("client", inputClient),
+    bind("language", inputLanguage),
+    map(({ url, username, client, language }) => {
+      const config: ClientConfiguration = {
+        name: "",
+        url,
+        username,
+        password: "",
+        language,
+        client,
+        allowSelfSigned: false,
+        diff_formatter: "ADT formatter",
+        s4HanaCloud: true
+      }
+      return { config }
+    })
+  )
+
 const pickDestination = () =>
   quickPick(["User", "Workspace"], { placeHolder: "Select destination file" }, (d: any) =>
     d === "User" ? ConfigurationTarget.Global : ConfigurationTarget.Workspace
@@ -318,6 +353,8 @@ export const createConnection = async () => {
           return pipe(configFromUrl(x.url), saveCloudConfig)()
         case "NONCLOUD":
           return pipe(localConfig(), saveLocal)()
+        case "S4HANACLOUD":
+          return pipe(s4HanaCloudConfig(), saveLocal)()
       }
     })
   )

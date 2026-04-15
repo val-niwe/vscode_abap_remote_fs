@@ -39,6 +39,8 @@ export interface ClientConfiguration {
   allowSelfSigned: boolean
   customCA?: string
   diff_formatter: "ADT formatter" | "AbapLint" | "Simple"
+  /** When true, this connection uses S/4HANA Cloud SSO via re-entrance tickets */
+  s4HanaCloud?: boolean
   oauth?: {
     clientId: string
     clientSecret: string

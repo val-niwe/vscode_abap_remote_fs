@@ -123,8 +123,9 @@ export class FsProvider implements FileSystemProvider {
       if (isAbapFolder(node)) await node.refresh()
       return node
     } catch (e) {
-      // Don't log FileNotFound errors for method names/debug artifacts to reduce noise
-      if (!(e instanceof FileSystemError && e.name === "FileNotFound (FileSystemError)"))
+      // Don't log FileNotFound errors for method names/debug artifacts to reduce noise.
+      // Use `code` (VS Code public API) instead of `name` (implementation detail) for a reliable check.
+      if (!(e instanceof FileSystemError && (e as any).code === "FileNotFound"))
         log.debug(`Error in stat of ${uri?.toString()}\n${caughtToString(e)}`)
       throw e
     }
