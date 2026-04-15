@@ -34,6 +34,7 @@ export interface ClientConfiguration {
   url: string
   username: string
   password: string
+  authenticationType?: "basic" | "reentranceTicket" | "oauth2" | "oauth2ClientCredential"
   client: string
   language: string
   allowSelfSigned: boolean

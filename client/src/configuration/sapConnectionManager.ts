@@ -271,14 +271,19 @@ export class SapConnectionManager {
   }
 
   private cleanConnectionObject(connection: ConnectionData): RemoteConfig {
+    const isS4Cloud = connection.authenticationType === "reentranceTicket"
     const cleaned: any = {
       url: connection.url,
       username: connection.username,
       password: "", // Empty string - actual password stored in OS credential manager only
       client: connection.client,
       language: connection.language || "en",
-      allowSelfSigned: connection.allowSelfSigned || false,
+      allowSelfSigned: isS4Cloud ? false : connection.allowSelfSigned || false,
       diff_formatter: connection.diff_formatter || "ADT formatter"
+    }
+
+    if (connection.authenticationType) {
+      cleaned.authenticationType = connection.authenticationType
     }
 
     // IMPORTANT: Password field must be present but empty - actual password stored in OS credential manager
@@ -290,7 +295,7 @@ export class SapConnectionManager {
     if (connection.customCA) cleaned.customCA = connection.customCA
 
     // Handle sapGui configuration
-    if (connection.sapGui && this.hasSapGuiValues(connection.sapGui)) {
+    if (!isS4Cloud && connection.sapGui && this.hasSapGuiValues(connection.sapGui)) {
       cleaned.sapGui = {
         disabled: connection.sapGui.disabled || false,
         guiType: connection.sapGui.guiType || "SAPGUI"
@@ -818,7 +823,8 @@ export class SapConnectionManager {
                             <button id="bulkEditUsernameBtn" class="btn btn-secondary">✏️ Change Username</button>
                             <button id="bulkDeleteBtn" class="btn btn-danger">🗑️ Delete Selected</button>
                         </div>
-                        <button id="addCloudBtn" class="btn btn-secondary">☁️ Add Cloud Connection</button>
+                        <button id="addCloudBtn" class="btn btn-secondary">☁️ Add ABAP Cloud</button>
+                        <button id="addS4CloudBtn" class="btn btn-secondary">🏢 Add S/4HANA Cloud</button>
                         <button id="exportBtn" class="btn btn-secondary">📤 Export Connections</button>
                         <button id="importJsonBtn" class="btn btn-secondary">📥 Import from JSON</button>
                         <button id="addBtn" class="btn btn-primary">➕ Add Application Server</button>
@@ -1250,7 +1256,7 @@ export class SapConnectionManager {
     return `
             <div id="formError" style="display: none; padding: 12px; margin-bottom: 16px; background: rgba(220, 53, 69, 0.1); border: 1px solid rgba(220, 53, 69, 0.3); color: #dc3545; border-radius: 4px;"></div>
             
-            <div class="form-section">
+            <div class="form-section" id="basicConfigSection">
                 <h3>Basic Configuration</h3>
                 <div class="form-row">
                     <div class="form-group">
@@ -1268,7 +1274,7 @@ export class SapConnectionManager {
                     <div class="form-group">
                         <label for="username">Username *</label>
                         <input type="text" id="username" name="username" required>
-                        <div class="help-text">Password will be requested on first connection and stored securely in OS credential manager</div>
+                      <div class="help-text" id="usernameHelpText">Password will be requested on first connection and stored securely in OS credential manager</div>
                     </div>
                 </div>
                 <div class="form-row">
@@ -1285,7 +1291,7 @@ export class SapConnectionManager {
                 </div>
             </div>
 
-            <div class="form-section">
+            <div class="form-section" id="additionalOptionsSection">
                 <h3>Additional Options</h3>
                 <div class="form-row">
                     <div class="form-group">
@@ -1311,7 +1317,7 @@ export class SapConnectionManager {
                         <input type="text" id="atcVariant" name="atcVariant" placeholder="Optional">
                     </div>
                 </div>
-                <div class="form-row">
+                <div class="form-row" id="allowSelfSignedRow">
                     <div class="form-group checkbox-group">
                         <input type="checkbox" id="allowSelfSigned" name="allowSelfSigned">
                         <label for="allowSelfSigned">Allow Self-Signed Certificates</label>
@@ -1326,7 +1332,7 @@ export class SapConnectionManager {
                 </div>
             </div>
 
-            <div class="form-section">
+            <div class="form-section" id="sapGuiSection">
                 <h3>SAP GUI Integration</h3>
                 <div class="form-row">
                     <div class="form-group checkbox-group">
@@ -1417,6 +1423,7 @@ export class SapConnectionManager {
             const vscode = acquireVsCodeApi();
             let currentTarget = 'user';
             let editingConnectionKey = null; // Store the connection key (ID) being edited
+            let editorMode = 'appServer'; // appServer | s4hanaCloud
             let connections = { user: {}, workspace: {} };
 
             // Initialize
@@ -1472,8 +1479,9 @@ export class SapConnectionManager {
                 });
 
                 // Header buttons
-                document.getElementById('addBtn').addEventListener('click', () => openEditor());
+                document.getElementById('addBtn').addEventListener('click', () => openEditor(null, null, 'appServer'));
                 document.getElementById('addCloudBtn').addEventListener('click', () => openCloudModal());
+                document.getElementById('addS4CloudBtn').addEventListener('click', () => openEditor(null, null, 's4hanaCloud'));
                 document.getElementById('exportBtn').addEventListener('click', () => exportConnections());
                 document.getElementById('importJsonBtn').addEventListener('click', () => document.getElementById('jsonFileInput').click());
                 
@@ -1695,8 +1703,9 @@ export class SapConnectionManager {
                 return labels[type] || type;
             }
 
-            function openEditor(connectionKey = null, connection = null) {
+            function openEditor(connectionKey = null, connection = null, mode = 'appServer') {
                 editingConnectionKey = connectionKey;
+              editorMode = mode;
                 const modal = document.getElementById('editorModal');
                 const title = document.getElementById('modalTitle');
                 const form = document.getElementById('connectionForm');
@@ -1710,9 +1719,11 @@ export class SapConnectionManager {
 
                 if (connection) {
                     title.textContent = 'Edit Connection: ' + connectionKey;
-                    populateForm(connectionKey, connection);
+                  const authMode = connection.authenticationType === 'reentranceTicket' ? 's4hanaCloud' : editorMode;
+                  editorMode = authMode;
+                  populateForm(connectionKey, connection);
                 } else {
-                    title.textContent = 'Add New Connection';
+                  title.textContent = mode === 's4hanaCloud' ? 'Add S/4HANA Cloud Connection' : 'Add New Connection';
                     
                     // Re-enable name field BEFORE resetting form
                     const nameField = document.getElementById('name');
@@ -1733,6 +1744,8 @@ export class SapConnectionManager {
                     handleSapGuiEnabledChange(); // Show SAP GUI fields
                     handleSapGuiConnectionTypeChange(); // Show direct server fields
                 }
+
+                  applyFormMode();
 
                 modal.style.display = 'flex';
             }
@@ -1801,7 +1814,39 @@ export class SapConnectionManager {
                 if (conn.oauth) {
                     // OAuth credentials are maintained automatically
                 }
+
+                applyFormMode();
             }
+
+              function applyFormMode() {
+                const isS4Cloud = editorMode === 's4hanaCloud';
+                const allowSelfSignedRow = document.getElementById('allowSelfSignedRow');
+                const customCAField = document.getElementById('customCAField');
+                const sapGuiSection = document.getElementById('sapGuiSection');
+                const usernameHelpText = document.getElementById('usernameHelpText');
+
+                if (allowSelfSignedRow) {
+                  allowSelfSignedRow.style.display = isS4Cloud ? 'none' : '';
+                }
+                if (customCAField) {
+                  customCAField.classList.remove('show');
+                  customCAField.style.display = isS4Cloud ? 'none' : '';
+                }
+                if (sapGuiSection) {
+                  sapGuiSection.style.display = isS4Cloud ? 'none' : '';
+                }
+                if (usernameHelpText) {
+                  usernameHelpText.textContent = isS4Cloud
+                    ? 'Informational field for S/4HANA Cloud SSO (not used for authentication)'
+                    : 'Password will be requested on first connection and stored securely in OS credential manager';
+                }
+
+                if (isS4Cloud) {
+                  document.getElementById('allowSelfSigned').checked = false;
+                  document.getElementById('sapGui_enabled').checked = false;
+                  handleSapGuiEnabledChange();
+                }
+              }
             
             function handleSapGuiConnectionTypeChange() {
                 const connectionType = document.getElementById('sapGui_connectionType').value;
@@ -1870,15 +1915,16 @@ export class SapConnectionManager {
                     url: formData.get('url'),
                     username: formData.get('username'),
                     password: "", // Empty string - password stored in OS credential manager only, never in settings.json
+                  authenticationType: editorMode === 's4hanaCloud' ? 'reentranceTicket' : undefined,
                     client: formData.get('client'),
                     language: (formData.get('language') || 'en').toLowerCase(), // Enforce lowercase
-                    allowSelfSigned: formData.get('allowSelfSigned') === 'on',
+                  allowSelfSigned: editorMode === 's4hanaCloud' ? false : formData.get('allowSelfSigned') === 'on',
                     diff_formatter: formData.get('diff_formatter') || 'ADT formatter',
                     maxDebugThreads: parseInt(formData.get('maxDebugThreads')) || 4,
                     atcapprover: formData.get('atcapprover') || undefined,
                     atcVariant: formData.get('atcVariant') || undefined,
-                    customCA: formData.get('customCA') || undefined,
-                    sapGui: {
+                  customCA: editorMode === 's4hanaCloud' ? undefined : (formData.get('customCA') || undefined),
+                  sapGui: editorMode === 's4hanaCloud' ? undefined : {
                         disabled: formData.get('sapGui.enabled') !== 'on', // Inverted logic - enabled checkbox -> disabled flag
                         guiType: formData.get('sapGui.guiType') || 'SAPGUI',
                         server: formData.get('sapGui.server') || undefined,
@@ -1887,7 +1933,7 @@ export class SapConnectionManager {
                         messageServerPort: formData.get('sapGui.messageServerPort') || undefined,
                         group: formData.get('sapGui.group') || undefined,
                         routerString: formData.get('sapGui.routerString') || undefined
-                    }
+                  }
                 };
                 
                 const connectionId = editingConnectionKey || formData.get('name');
@@ -1914,7 +1960,8 @@ export class SapConnectionManager {
 
             function editConnection(name) {
                 const conn = connections[currentTarget][name];
-                openEditor(name, conn);
+              const mode = conn.authenticationType === 'reentranceTicket' ? 's4hanaCloud' : 'appServer';
+              openEditor(name, conn, mode);
             }
 
             function deleteConnection(name) {
@@ -2031,7 +2078,7 @@ export class SapConnectionManager {
                 connection._availableLanguages = availableLanguages;
                 
                 // Open editor with pre-filled cloud connection data
-                openEditor(connection);
+              openEditor(null, connection, 'appServer');
                 
                 showMessage('Cloud connection created. Please review and save.', 'success');
             }

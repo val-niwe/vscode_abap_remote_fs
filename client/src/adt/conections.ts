@@ -6,6 +6,7 @@ import { LogOutPendingDebuggers } from "./debugger"
 import { SapSystemValidator } from "../services/sapSystemValidator"
 import { LocalFsProvider } from "../fs/LocalFsProvider"
 import { log } from "../lib"
+import { attachReentranceTicketLogin } from "../auth/reentranceTicket"
 export const ADTSCHEME = "adt"
 export const ADTURIPATTERN = /\/sap\/bc\/adt\//
 
@@ -34,9 +35,19 @@ async function create(connId: string) {
   )
   log(`✅ SAP system validation passed for: ${connId}`)
 
+  const isReentranceTicket = connection.authenticationType === "reentranceTicket"
   let client
-  if (connection.oauth || connection.password) {
-    client = createClient(connection)
+  if (connection.oauth || connection.password || isReentranceTicket) {
+    client = createClient({
+      ...connection,
+      password: connection.password || (isReentranceTicket ? "reentranceTicket" : "")
+    })
+
+    if (isReentranceTicket) {
+      attachReentranceTicketLogin(client)
+      attachReentranceTicketLogin(client.statelessClone)
+    }
+
     await client.login() // raise exception for login issues
     await client.statelessClone.login()
 
