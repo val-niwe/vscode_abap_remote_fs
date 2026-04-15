@@ -133,16 +133,18 @@ function addContentTypeInterceptor(adtClient: ADTClient) {
  *
  *  2. All subsequent requests:
  *     ADTClient still adds "Authorization: bearer <ticket>" (same ticket kept
- *     in the private `bearer` field).  We simply remove the header — the
- *     session cookie established in step 1 authenticates the request.
- *     Sending MYSAPSSO2 again would make the server try to create a new session
- *     on every call, breaking the CSRF token and causing unexpected responses.
+ *     in the private `bearer` field).  We convert it to "MYSAPSSO2: <ticket>"
+ *     for authentication, but omit "x-sap-security-session: create" to avoid
+ *     re-creating the ABAP session on every call (which would cause the server
+ *     to return a session-establishment response instead of the requested data).
+ *     Note: axios in Node.js does not forward session cookies automatically,
+ *     so MYSAPSSO2 must be sent on every request to authenticate.
  *
  *  3. Session expiry / re-login:
  *     When the server returns 401, the library's auto-login kicks in and calls
  *     `login()` again, obtaining a fresh ticket.  Our response error interceptor
- *     resets `sessionEstablished` so that the re-login request is treated as
- *     a new session establishment (step 1 again).
+ *     resets `sessionEstablished` so that the re-login request re-sends the
+ *     "x-sap-security-session: create" header to establish a new ABAP session.
  */
 function addS4HanaCloudAuthInterceptor(adtClient: ADTClient) {
   try {
@@ -157,6 +159,7 @@ function addS4HanaCloudAuthInterceptor(adtClient: ADTClient) {
     ) {
       const axios = httpClient.httpclient.axios
       // Per-client flag: true once the first MYSAPSSO2 login succeeded.
+      // Used only to suppress "x-sap-security-session: create" on subsequent requests.
       let sessionEstablished = false
 
       axios.interceptors.request.use((config: any) => {
@@ -167,21 +170,23 @@ function addS4HanaCloudAuthInterceptor(adtClient: ADTClient) {
           const ticket = auth.substring(7)
           delete headers.Authorization
           delete headers.authorization
+          // Always send MYSAPSSO2 — axios (Node.js) does not forward session cookies,
+          // so the ticket must be present on every request for authentication.
+          headers.MYSAPSSO2 = ticket
           if (!sessionEstablished) {
-            // First request: establish the ABAP session via the reentrance ticket.
-            headers.MYSAPSSO2 = ticket
+            // First request only: tell the server to create a new ABAP session.
+            // Sending this header on subsequent requests causes the server to
+            // return a session-creation confirmation instead of the requested data.
             headers["x-sap-security-session"] = "create"
           }
-          // After session is established subsequent requests rely on the session
-          // cookie; the Authorization header is removed (done above) and nothing
-          // extra is added here.
           config.headers = headers
         }
         return config
       })
 
       // Mark session as established after the first successful response, and
-      // reset it when a 401 is received so the next login attempt re-sends MYSAPSSO2.
+      // reset it when a 401 is received so the next login attempt re-sends
+      // "x-sap-security-session: create" to establish a fresh ABAP session.
       axios.interceptors.response.use(
         (response: any) => {
           sessionEstablished = true
