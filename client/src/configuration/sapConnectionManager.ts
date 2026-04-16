@@ -821,11 +821,11 @@ export class SapConnectionManager {
                     <div class="header-actions">
 
                         <div id="bulkActions" class="bulk-actions hidden">
-                          <button id="bulkEditUsernameBtn" class="btn btn-secondary">
-                              ✏️ Edit Username
-                          </button>
                           <button id="bulkDeleteBtn" class="btn btn-danger">
                               🗑️ Delete Selected
+                          </button>
+                          <button id="bulkEditUsernameBtn" class="btn btn-secondary">
+                              ✏️ Edit Username
                           </button>
                         </div>
 
@@ -837,7 +837,7 @@ export class SapConnectionManager {
                               📥 Import
                           </button>
                         </div>
-                        
+
                         <div class="primary-actions">
                             <button id="addCloudBtn" class="btn btn-secondary">
                                 ☁️ ABAP Cloud
@@ -1626,7 +1626,7 @@ export class SapConnectionManager {
                                 <tr>
                                     <td><input type="checkbox" class="row-checkbox" data-name="\${name}"></td>
                                     <td><span class="connection-name">\${escapeHtml(name)}</span></td>
-                                    <td><span class="gui-badge">\${conn.s4HanaCloud ? '☁️ S/4HANA Cloud' : conn.oauth ? '☁️ ABAP Cloud' : '🖥️ Application Server'}</span></td>
+                                    <td><span class="gui-badge">\${conn.authenticationType === 'reentranceTicket' ? '☁️ S/4HANA Cloud' : conn.oauth ? '☁️ ABAP Cloud' : '🖥️ Application Server'}</span></td>
                                     <td>\${escapeHtml(conn.url || '')}</td>
                                     <td>\${escapeHtml(conn.username || '')}</td>
                                     <td>\${escapeHtml(conn.client || '')}</td>
