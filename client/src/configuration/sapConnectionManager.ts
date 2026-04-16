@@ -819,15 +819,36 @@ export class SapConnectionManager {
                 <header>
                     <h1>SAP Connection Manager</h1>
                     <div class="header-actions">
-                        <div id="bulkActions" style="display: none; gap: 10px;">
-                            <button id="bulkEditUsernameBtn" class="btn btn-secondary">✏️ Change Username</button>
-                            <button id="bulkDeleteBtn" class="btn btn-danger">🗑️ Delete Selected</button>
+
+                        <div id="bulkActions" class="bulk-actions hidden">
+                          <button id="bulkEditUsernameBtn" class="btn btn-secondary">
+                              ✏️ Edit Username
+                          </button>
+                          <button id="bulkDeleteBtn" class="btn btn-danger">
+                              🗑️ Delete Selected
+                          </button>
                         </div>
-                        <button id="addCloudBtn" class="btn btn-secondary">☁️ Add ABAP Cloud</button>
-                        <button id="addS4CloudBtn" class="btn btn-secondary">🏢 Add S/4HANA Cloud</button>
-                        <button id="exportBtn" class="btn btn-secondary">📤 Export Connections</button>
-                        <button id="importJsonBtn" class="btn btn-secondary">📥 Import from JSON</button>
-                        <button id="addBtn" class="btn btn-primary">➕ Add Application Server</button>
+
+                        <div class="secondary-actions">
+                          <button id="exportBtn" class="btn btn-secondary">
+                              📤 Export
+                          </button>
+                          <button id="importJsonBtn" class="btn btn-secondary">
+                              📥 Import
+                          </button>
+                        </div>
+                        
+                        <div class="primary-actions">
+                            <button id="addCloudBtn" class="btn btn-secondary">
+                                ☁️ ABAP Cloud
+                            </button>
+                            <button id="addS4CloudBtn" class="btn btn-secondary">
+                                ☁️ S/4HANA Cloud
+                            </button>
+                            <button id="addBtn" class="btn btn-primary">
+                                ➕ Add Application Server
+                            </button>
+                        </div>
                     </div>
                 </header>
 
@@ -1587,6 +1608,7 @@ export class SapConnectionManager {
                             <tr>
                                 <th><input type="checkbox" id="selectAll"></th>
                                 <th>Name</th>
+                                <th>Type</th>
                                 <th>URL</th>
                                 <th>Username</th>
                                 <th>Client</th>
@@ -1604,11 +1626,12 @@ export class SapConnectionManager {
                                 <tr>
                                     <td><input type="checkbox" class="row-checkbox" data-name="\${name}"></td>
                                     <td><span class="connection-name">\${escapeHtml(name)}</span></td>
+                                    <td><span class="gui-badge">\${conn.s4HanaCloud ? '☁️ S/4HANA Cloud' : conn.oauth ? '☁️ ABAP Cloud' : '🖥️ Application Server'}</span></td>
                                     <td>\${escapeHtml(conn.url || '')}</td>
                                     <td>\${escapeHtml(conn.username || '')}</td>
                                     <td>\${escapeHtml(conn.client || '')}</td>
                                     <td>\${formatValue(conn.language, 'en')}</td>
-                                    <td><span class="gui-badge">\${getGuiTypeLabel(conn.sapGui?.guiType || 'SAPGUI')}</span></td>
+                                    <td><span class="gui-badge">\${getGuiTypeLabel(conn.sapGui?.guiType || 'NONE')}</span></td>
                                     <td>\${formatValue(conn.sapGui?.server, '')}</td>
                                     <td>\${formatValue(conn.sapGui?.systemNumber, '')}</td>
                                     <td>\${formatValue(conn.atcapprover, '')}</td>
@@ -1698,7 +1721,8 @@ export class SapConnectionManager {
                     'SAPGUI': 'Native SAP GUI',
                     'WEBGUI_CONTROLLED': 'Web (Controlled)',
                     'WEBGUI_UNSAFE': 'Web (Browser)',
-                    'WEBGUI_UNSAFE_EMBEDDED': 'Web (Embedded)'
+                    'WEBGUI_UNSAFE_EMBEDDED': 'Web (Embedded)',
+                    'NONE': 'Not supported'
                 };
                 return labels[type] || type;
             }
