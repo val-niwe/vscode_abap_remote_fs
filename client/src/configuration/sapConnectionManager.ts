@@ -821,11 +821,11 @@ export class SapConnectionManager {
                     <div class="header-actions">
 
                         <div id="bulkActions" class="bulk-actions hidden">
-                          <button id="bulkDeleteBtn" class="btn btn-danger">
-                              🗑️ Delete Selected
-                          </button>
                           <button id="bulkEditUsernameBtn" class="btn btn-secondary">
                               ✏️ Edit Username
+                          </button>
+                          <button id="bulkDeleteBtn" class="btn btn-danger">
+                              🗑️ Delete Selected
                           </button>
                         </div>
 
