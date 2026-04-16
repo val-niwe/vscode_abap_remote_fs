@@ -839,15 +839,14 @@ export class SapConnectionManager {
                         </div>
 
                         <div class="primary-actions">
-                            <button id="addCloudBtn" class="btn btn-secondary">
-                                ☁️ Add ABAP Cloud
-                            </button>
-                            <button id="addS4CloudBtn" class="btn btn-secondary">
-                                ☁️ Add S/4HANA Cloud
-                            </button>
-                            <button id="addBtn" class="btn btn-primary">
-                                ➕ Add Application Server
-                            </button>
+                          <button id="addMenuBtn" class="btn btn-primary add-menu-trigger" title="Add Connection" aria-haspopup="true" aria-expanded="false">
+                            ➕
+                          </button>
+                          <div id="addMenu" class="add-menu" role="menu" aria-label="Add connection type">
+                            <button id="addBtn" class="add-menu-item" role="menuitem">🖥️ Application Server</button>
+                            <button id="addCloudBtn" class="add-menu-item" role="menuitem">☁️ ABAP Cloud</button>
+                            <button id="addS4CloudBtn" class="add-menu-item" role="menuitem">☁️ S/4HANA Cloud</button>
+                          </div>
                         </div>
                     </div>
                 </header>
@@ -966,6 +965,58 @@ export class SapConnectionManager {
             .header-actions {
                 display: flex;
                 gap: 10px;
+            }
+
+            .primary-actions {
+              position: relative;
+              display: flex;
+              align-items: center;
+            }
+
+            .add-menu-trigger {
+              width: 40px;
+              height: 40px;
+              min-width: 40px;
+              border-radius: 999px;
+              padding: 0;
+              font-size: 24px;
+              line-height: 1;
+              display: inline-flex;
+              align-items: center;
+              justify-content: center;
+            }
+
+            .add-menu {
+              position: absolute;
+              top: calc(100% + 8px);
+              right: 0;
+              min-width: 250px;
+              display: none;
+              flex-direction: column;
+              background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
+              border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
+              border-radius: 8px;
+              overflow: hidden;
+              box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+              z-index: 100;
+            }
+
+            .add-menu.show {
+              display: flex;
+            }
+
+            .add-menu-item {
+              border: 0;
+              background: transparent;
+              color: var(--vscode-foreground);
+              text-align: left;
+              padding: 10px 12px;
+              font-size: 13px;
+              cursor: pointer;
+            }
+
+            .add-menu-item:hover {
+              background: var(--vscode-list-hoverBackground);
             }
 
             .btn {
@@ -1491,6 +1542,14 @@ export class SapConnectionManager {
             });
 
             function setupEventListeners() {
+              const setAddMenuOpen = (open) => {
+                const menu = document.getElementById('addMenu');
+                const trigger = document.getElementById('addMenuBtn');
+                if (!menu || !trigger) return;
+                menu.classList.toggle('show', open);
+                trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+              };
+
                 // Target selector
                 document.querySelectorAll('input[name="target"]').forEach(radio => {
                     radio.addEventListener('change', (e) => {
@@ -1500,11 +1559,44 @@ export class SapConnectionManager {
                 });
 
                 // Header buttons
-                document.getElementById('addBtn').addEventListener('click', () => openEditor(null, null, 'appServer'));
-                document.getElementById('addCloudBtn').addEventListener('click', () => openCloudModal());
-                document.getElementById('addS4CloudBtn').addEventListener('click', () => openEditor(null, null, 's4hanaCloud'));
+              const addMenuBtn = document.getElementById('addMenuBtn');
+              const primaryActions = document.querySelector('.primary-actions');
+
+              if (addMenuBtn) {
+                addMenuBtn.addEventListener('click', (e) => {
+                  e.stopPropagation();
+                  const menu = document.getElementById('addMenu');
+                  const isOpen = !!(menu && menu.classList.contains('show'));
+                  setAddMenuOpen(!isOpen);
+                });
+              }
+
+              document.getElementById('addBtn').addEventListener('click', () => {
+                setAddMenuOpen(false);
+                openEditor(null, null, 'appServer');
+              });
+              document.getElementById('addCloudBtn').addEventListener('click', () => {
+                setAddMenuOpen(false);
+                openCloudModal();
+              });
+              document.getElementById('addS4CloudBtn').addEventListener('click', () => {
+                setAddMenuOpen(false);
+                openEditor(null, null, 's4hanaCloud');
+              });
                 document.getElementById('exportBtn').addEventListener('click', () => exportConnections());
                 document.getElementById('importJsonBtn').addEventListener('click', () => document.getElementById('jsonFileInput').click());
+
+              document.addEventListener('click', (e) => {
+                if (!primaryActions || !primaryActions.contains(e.target)) {
+                  setAddMenuOpen(false);
+                }
+              });
+
+              document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                  setAddMenuOpen(false);
+                }
+              });
                 
                 // Bulk action buttons
                 document.getElementById('bulkEditUsernameBtn').addEventListener('click', bulkEditUsername);
