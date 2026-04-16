@@ -174,10 +174,6 @@ export function attachReentranceTicketLogin(client: ADTClient) {
       return this.loginPromise
     }
 
-    if (!forceFreshTicket && this.__reentranceSessionEstablished && hasSessionCookie(this)) {
-      return
-    }
-
     this.auth = undefined
     this.bearer = undefined
 
