@@ -840,10 +840,10 @@ export class SapConnectionManager {
 
                         <div class="primary-actions">
                             <button id="addCloudBtn" class="btn btn-secondary">
-                                ☁️ ABAP Cloud
+                                ☁️ Add ABAP Cloud
                             </button>
                             <button id="addS4CloudBtn" class="btn btn-secondary">
-                                ☁️ S/4HANA Cloud
+                                ☁️ Add S/4HANA Cloud
                             </button>
                             <button id="addBtn" class="btn btn-primary">
                                 ➕ Add Application Server
